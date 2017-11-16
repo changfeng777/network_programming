@@ -5,6 +5,7 @@ void EpollServer::EventLoop()
 {
 	// 添加_listenfd读事件
 	SetNonblocking(_listenfd);
+	SetNoDelay(_listenfd);
 	OpEvent(_listenfd, EPOLLIN, EPOLL_CTL_ADD, __LINE__);
 
 	// 事件列表
@@ -115,10 +116,12 @@ void Socks5Server::ConnectEventHandle(int fd)
 
 	// 监听读事件
 	SetNonblocking(fd);
+	SetNoDelay(fd);
 	OpEvent(fd, EPOLLIN, EPOLL_CTL_ADD, __LINE__);
 }
 
-bool Socks5Server::VerifySocks5(int connectfd)
+// 授权处理
+bool Socks5Server::AuthHandle(int connectfd)
 {
 /*　+----+----------+----------+
     |VER | NMETHODS | METHODS  |
@@ -159,7 +162,7 @@ bool Socks5Server::VerifySocks5(int connectfd)
 	return true;
 }
 
-int Socks5Server::RequestServer(int connectfd)
+int Socks5Server::EstablishmentHandle(int connectfd)
 {
 	/*　+----+-----+-------+------+----------+----------+
 	  |VER | CMD |　RSV　| ATYP | DST.ADDR | DST.PORT |
@@ -190,6 +193,9 @@ int Socks5Server::RequestServer(int connectfd)
 			ErrorDebug("recv ipv4\n");
 			return -1;
 		}
+		buf[4] = '\0';
+
+		TraceDebug("ipv4:%s", buf);
 	}
 	else if(buf[3] == 0x03) //domain name
 	{
@@ -206,6 +212,8 @@ int Socks5Server::RequestServer(int connectfd)
 			return false;
 		}
 		buf[len] = '\0';
+
+		TraceDebug("domain:%s", buf);
 
 		// 通过域名取ip
 		struct hostent* hptr = gethostbyname(buf);
@@ -236,6 +244,13 @@ int Socks5Server::RequestServer(int connectfd)
 		return -1;
 	}
 
+	struct sockaddr_in addr;
+	memset(&addr, 0, sizeof(struct sockaddr_in));
+	addr.sin_family = AF_INET;
+	memcpy(&addr.sin_addr.s_addr, ip, 4);
+	addr.sin_port = *((uint16_t*)port);
+
+	// 异步连接服务器，避免地址不可访问时的阻塞。
 	int serverfd = socket(AF_INET, SOCK_STREAM, 0);
 	if(serverfd <= 0)
 	{
@@ -243,15 +258,30 @@ int Socks5Server::RequestServer(int connectfd)
 		return -1;
 	}
 
-	struct sockaddr_in addr;
-	memset(&addr, 0, sizeof(struct sockaddr_in));
-	addr.sin_family = AF_INET;
-	memcpy(&addr.sin_addr.s_addr, ip, 4);
-	addr.sin_port = *((uint16_t*)port);
+	SetNoDelay(serverfd);
+	SetNonblocking(serverfd);
 	if (connect(serverfd, (struct sockaddr*)&addr, sizeof(addr)) < 0)
 	{
-		ErrorDebug("connect server");
-		return -1;
+		switch (errno)
+		{
+		case EINPROGRESS:
+		case EINTR:
+		case EISCONN:
+			break;
+
+		case EAGAIN:
+		case EADDRINUSE:
+		case EADDRNOTAVAIL:
+		case ECONNREFUSED:
+		case ENETUNREACH:
+			// 需要定时器任务连接重试,当前暂时不好处理
+			//retry(serverfd);
+			//break;
+		default:
+			ErrorDebug("connect error");
+			close(serverfd);
+			serverfd = -1;
+		}
 	}
 
 	return serverfd;
@@ -265,9 +295,9 @@ void Socks5Server::ReadEventHandle(int connectfd)
 		Connenct* connect = conIt->second;
 		if (connect->_state == CONNECTED)
 		{
-			if(!VerifySocks5(connectfd))
+			if(!AuthHandle(connectfd))
 			{
-				ErrorDebug("VerifySocks5");
+				ErrorDebug("AuthHandle");
 				return;
 			}
 
@@ -284,7 +314,7 @@ void Socks5Server::ReadEventHandle(int connectfd)
 			reply[3] = 0x01;
 
 			// 请求服务器信息，并进行连接
-			int serverfd = RequestServer(connectfd);
+			int serverfd = EstablishmentHandle(connectfd);
 			if(serverfd > 0)
 			{
 				// 将serverfd设置为非阻塞，并添加到读事件
@@ -292,7 +322,6 @@ void Socks5Server::ReadEventHandle(int connectfd)
 				connect->_serverChannel._event = EPOLLIN;
 
 				// 添加serverfd到读事件
-				SetNonblocking(serverfd);
 				OpEvent(serverfd, EPOLLIN, EPOLL_CTL_ADD, __LINE__);
 				_connectMap[serverfd] = connect;
 
@@ -334,7 +363,7 @@ void Socks5Server::ReadEventHandle(int connectfd)
 			int rLen = recv(clientChannel->_fd, buf, bufLen, 0);
 			if(rLen == 0)
 			{
-				TraceDebug("recv EOF: %d->%d", clientChannel->_fd, serverChannel->_fd);
+				//TraceDebug("recv EOF: %d->%d", clientChannel->_fd, serverChannel->_fd);
 
 				// client收到EOF，shutdown client rd
 				//TraceDebug("SHUT_RD:%d", clientChannel->_fd);
@@ -355,7 +384,7 @@ void Socks5Server::ReadEventHandle(int connectfd)
 				if (serverChannel->_buffer.empty())
 				{
 					shutdown(serverChannel->_fd, SHUT_WR);
-					TraceDebug("SHUT_WR:%d", serverChannel->_fd);
+					//TraceDebug("SHUT_WR:%d", serverChannel->_fd);
 				}
 			}
 			else if(rLen == -1)
@@ -367,6 +396,7 @@ void Socks5Server::ReadEventHandle(int connectfd)
 				}
 				else
 				{
+					clientChannel->_flag = true;
 					ErrorDebug("recv client error");
 				}
 			}
@@ -384,16 +414,9 @@ void Socks5Server::ReadEventHandle(int connectfd)
 
 			if (clientChannel->_flag && serverChannel->_flag)
 			{
-				if(_connectMap.erase(clientChannel->_fd) == 0)
-				{
-					ErrorDebug("erase failed:%d", clientChannel->_fd);
-				}
-
-				if(_connectMap.erase(serverChannel->_fd) == 0)
-				{
-					ErrorDebug("erase failed:%d", serverChannel->_fd);
-				}
-
+				_connectMap.erase(clientChannel->_fd);
+				_connectMap.erase(serverChannel->_fd);
+				// 析构Connect时，析构Channel会close fd
 				delete connect;
 			}
 		}
@@ -411,7 +434,8 @@ void Socks5Server::ReadEventHandle(int connectfd)
 void Socks5Server::SendInLoop(int fd, const char* buf, size_t len)
 {
 	int sLen = send(fd, buf, len, 0);
-	if(sLen >= 0)
+	// 如果fd还没完全连接完成，则添加到buffer。
+	if(sLen >= 0 || (errno == EWOULDBLOCK || errno == EAGAIN))
 	{
 		Connenct* connect = _connectMap[fd];
 		Channel* channel = &(connect->_clientChannel);
@@ -430,7 +454,7 @@ void Socks5Server::SendInLoop(int fd, const char* buf, size_t len)
 				else
 					OpEvent(fd, channel->_event |= EPOLLOUT, EPOLL_CTL_MOD, __LINE__);
 
-			TraceDebug("send server:%d bytes. left:%d", len-sLen);
+			//TraceDebug("send server:%d bytes. left:%d", len-sLen);
 		}
 		else
 		{
@@ -454,40 +478,41 @@ void Socks5Server::WriteEventHandle(int fd)
 	{
 		Connenct* connect = conIt->second;
 		assert(connect->_state == FORWARDING);
-
 		Channel* channel = &(connect->_clientChannel);
 		if(fd == connect->_serverChannel._fd)
 			channel = &(connect->_serverChannel);
 		
-		string& buffer = channel->_buffer;
-		int sLen = send(fd, buffer.c_str(), buffer.size(), 0);
-		if(sLen >= 0)
-		{
-			if (sLen < buffer.size())
-			{
-				buffer.erase(0, sLen);
+		string buffer = channel->_buffer;
+		channel->_buffer.clear();
+		SendInLoop(fd, buffer.c_str(), buffer.size());
+		//if(sLen >= 0)
+		//{
+		//	if (sLen < buffer.size())
+		//	{
+		//		buffer.erase(0, sLen);
 
-				// 添加写事件
-				if(!(channel->_event & EPOLLOUT))
-					if(channel->_event == 0)
-						OpEvent(fd, channel->_event |= EPOLLOUT, EPOLL_CTL_ADD, __LINE__);
-					else
-						OpEvent(fd, channel->_event |= EPOLLOUT, EPOLL_CTL_MOD, __LINE__);
+		//		// 添加写事件
+		//		if(!(channel->_event & EPOLLOUT))
+		//			if(channel->_event == 0)
+		//				OpEvent(fd, channel->_event |= EPOLLOUT, EPOLL_CTL_ADD, __LINE__);
+		//			else
+		//				OpEvent(fd, channel->_event |= EPOLLOUT, EPOLL_CTL_MOD, __LINE__);
 
-				TraceDebug("send server:%d bytes. left:%d", buffer.size()-sLen);
-			}
-			else
-			{
-				// 写完以后，删除写事件。
-				OpEvent(fd, channel->_event &= ~EPOLLOUT, EPOLL_CTL_MOD, __LINE__);
+		//		//TraceDebug("send server:%d bytes. left:%d", buffer.size()-sLen);
+		//	}
+		//	else
+		//	{
+		//		// 写完以后，删除写事件。
+		//		if(channel->_event & EPOLLOUT)
+		//			OpEvent(fd, channel->_event &= ~EPOLLOUT, EPOLL_CTL_MOD, __LINE__);
 
-				//TraceDebug("send server:%d bytes. all", sLen);
-			}
-		}
-		else
-		{
-			ErrorDebug("send to server:%d.size:%d", fd, buffer.size());
-		}
+		//		//TraceDebug("send server:%d bytes. all", sLen);
+		//	}
+		//}
+		//else
+		//{
+		//	ErrorDebug("send to server:%d.size:%d", fd, buffer.size());
+		//}
 
 	}
 	else
@@ -498,6 +523,10 @@ void Socks5Server::WriteEventHandle(int fd)
 
 int main()
 {
+	cout<<EAGAIN<<endl;
+	cout<<EWOULDBLOCK<<endl;
+	cout<<EISCONN<<endl;
+
 	Socks5Server server;
 	server.Start();
 

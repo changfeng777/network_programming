@@ -8,6 +8,7 @@ using namespace std;
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <fcntl.h>
@@ -105,6 +106,17 @@ public:
 		close(_listenfd);
 	}
 
+	void SetNoDelay(int fd)
+	{
+		int optval = 1;
+		int ret = ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY,
+			&optval, static_cast<socklen_t>(sizeof optval));
+		if(ret != 0)
+		{
+			ErrorDebug("setsockopt.fd:%d", fd);
+		}
+	}
+
 	void SetNonblocking(int sfd)
 	{
 		int flags, s;
@@ -195,8 +207,8 @@ public:
 		:EpollServer(port)
 	{}
 
-	bool VerifySocks5(int connectfd);
-	int RequestServer(int connectfd);
+	bool AuthHandle(int connectfd);
+	int EstablishmentHandle(int connectfd);
 	void SendInLoop(int fd, const char* buf, size_t len);
 
 	// 重写虚函数
