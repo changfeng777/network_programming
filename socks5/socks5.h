@@ -133,7 +133,7 @@ public:
 	void OpEvent(int fd, int events, int how, int line)
 	{
 		struct epoll_event event;
-		event.events = events;  
+		event.events = events;
 		event.data.fd = fd;
 		if(epoll_ctl(_eventfd, how, fd, &event) == -1)
 		{
@@ -164,8 +164,8 @@ public:
 	enum State
 	{
 		CONNECTED,	  // 连接
-		VERIFYED,	  // 验证
-		FORWARDING,   // 转发数据
+		AUTH,	  // 验证
+		ESTABLISHMENT,   // 转发数据
 	};
 
 	struct Channel
@@ -192,14 +192,16 @@ public:
 		}
 	};
 
-	struct Connenct
+	struct Connect
 	{
 		State  _state;			// socks5的状态
 		Channel _clientChannel; // 客户端通道
 		Channel _serverChannel; // 服务端通道
+		int _ref;				// 引用计数
 
-		Connenct()
+		Connect()
 			:_state(CONNECTED)
+			,_ref(1)
 		{}
 	};
 
@@ -207,9 +209,11 @@ public:
 		:EpollServer(port)
 	{}
 
+	void RemoveConnect(int fd);
 	bool AuthHandle(int connectfd);
 	int EstablishmentHandle(int connectfd);
 	void SendInLoop(int fd, const char* buf, size_t len);
+	void Forwarding(Channel* clientChannel, Channel* serverChannel);
 
 	// 重写虚函数
 	virtual void ConnectEventHandle(int connnectfd);
@@ -217,7 +221,7 @@ public:
 	virtual void WriteEventHandle(int connectfd);
 
 protected:
-	map<int, Connenct*> _connectMap;
+	map<int, Connect*> _connectMap;
 };
 
 class TransferServer : public EpollServer
