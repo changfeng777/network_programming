@@ -25,6 +25,8 @@ using namespace std;
 #include <pthread.h>
 #include <signal.h>
 
+#include "encrypt.h"
+
 class IgnoreSigPipe
 {
  public:
@@ -188,7 +190,8 @@ public:
 
 	void RemoveConnect(int fd);
 	void SendInLoop(int fd, const char* buf, size_t len);
-	void Forwarding(Channel* clientChannel, Channel* serverChannel);
+	void Forwarding(Channel* clientChannel, Channel* serverChannel,
+		bool recvDecrypt, bool sendEncry);
 	void EventLoop();
 	void Start();
 

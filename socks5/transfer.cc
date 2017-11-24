@@ -36,18 +36,25 @@ void TransferServer::ConnectEventHandle(int connnectfd)
 	_connectMap[serverfd] = connect;
 }
 
+// transfer server send to server encry
+// transfer server recv from server decrypt
 void TransferServer::ReadEventHandle(int connectfd)
 {
 	map<int, Connect*>::iterator conIt = _connectMap.find(connectfd);
 	if(conIt != _connectMap.end())
 	{
+		bool recvDecrypt = false, sendEncry = true;
 		Connect* connect = conIt->second;
 		Channel* clientChannel = &(connect->_clientChannel);
 		Channel* serverChannel = &(connect->_serverChannel);
-		if (serverChannel->_fd == connectfd)
-			swap(clientChannel, serverChannel);
 
-		Forwarding(clientChannel, serverChannel);
+		if (serverChannel->_fd == connectfd)
+		{
+			swap(recvDecrypt, sendEncry);
+			swap(clientChannel, serverChannel);
+		}
+
+		Forwarding(clientChannel, serverChannel, recvDecrypt, sendEncry);
 
 		if (clientChannel->_flag && serverChannel->_flag)
 		{
@@ -63,7 +70,8 @@ void TransferServer::ReadEventHandle(int connectfd)
 
 int main()
 {
-	TransferServer server("127.0.0.1", 8001, 8000);
+	//TransferServer server("127.0.0.1", 8001, 8000);
+	TransferServer server("43.224.35.5", 8001, 8000);
 	server.Start();
 
 	return 0;

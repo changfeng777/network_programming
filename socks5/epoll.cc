@@ -158,12 +158,35 @@ void EpollServer::RemoveConnect(int fd)
 	}
 }
 
-void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel)
+void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel,
+							 bool recvDecrypt, bool sendEncry)
 {
 	const int bufLen = 4096;
 	char buf[bufLen];
 	int rLen = recv(clientChannel->_fd, buf, bufLen, 0);
-	if(rLen == 0)
+	if(rLen > 0)
+	{
+		if(recvDecrypt)
+		{
+			Decrypt(buf, rLen);
+		}
+
+		//TraceDebug("recv client:%d bytes", rLen);
+	}
+	else if(rLen == -1)
+	{
+		// 操作被信号中断/超时->连接是正常的
+		if (errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN)
+		{
+			ErrorDebug("recv error:EAGAIN");
+		}
+		else
+		{
+			clientChannel->_flag = true;
+			ErrorDebug("recv client error: %d", clientChannel->_fd);
+		}
+	}
+	else
 	{
 		// client收到EOF，shutdown client rd
 		if(clientChannel->_event == EPOLLIN)
@@ -185,28 +208,16 @@ void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel)
 			shutdown(serverChannel->_fd, SHUT_WR);
 		}
 	}
-	else if(rLen == -1)
-	{
-		// 操作被信号中断/超时->连接是正常的
-		if (errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN)
-		{
-			ErrorDebug("recv error:EAGAIN");
-		}
-		else
-		{
-			clientChannel->_flag = true;
-			ErrorDebug("recv client error: %d", clientChannel->_fd);
-		}
-	}
-	else
-	{
-		//TraceDebug("recv client:%d bytes", rLen);
-	}
 
 	// 将接受到的数据转发给另一端
 	if(rLen > 0)
 	{
 		buf[rLen] = '\0';
+		if (sendEncry)
+		{
+			Encry(buf, rLen);
+		}
+		
 		SendInLoop(serverChannel->_fd, buf, rLen);
 	}
 }

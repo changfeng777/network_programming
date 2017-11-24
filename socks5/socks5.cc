@@ -44,6 +44,9 @@ bool Socks5Server::AuthHandle(int connectfd)
 		return false;
 	}
 
+	// 解密
+	Decrypt(buf, len);
+
 	if(buf[0] != 0x05)
 	{
 		ErrorDebug("not socks5 protocol");
@@ -53,6 +56,8 @@ bool Socks5Server::AuthHandle(int connectfd)
 	// 回复不需要验证
 	buf[0] = 0x05;
 	buf[1] = 0x0;
+	// 加密
+	Encry(buf, len);
 	if(send(connectfd, buf, 2, MSG_DONTWAIT) != 2)
 	{
 		ErrorDebug("reply socks5");
@@ -83,6 +88,9 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 		return -1;
 	}
 
+	// 解密
+	Decrypt(buf, 4);
+
 	if(buf[0] != 0x05 || buf[2] != 0x0)
 	{
 		ErrorDebug("not socks5 protocol");
@@ -101,6 +109,8 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 		}
 		ip[4] = '\0';
 
+		// 解密
+		Decrypt(ip, 4);
 		TraceDebug("ipv4:%s", ip);
 	}
 	else if(buf[3] == 0x03) //domain name
@@ -111,6 +121,9 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 			return -1;
 		}
 
+		// 解密
+		Decrypt(buf, 1);
+
 		int len = buf[0]; 
 		if(recv(connectfd, buf, len, 0) != len)
 		{
@@ -118,6 +131,9 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 			return -1;
 		}
 		buf[len] = '\0';
+
+		// 解密
+		Decrypt(buf, len);
 
 		TraceDebug("domain:%s", buf);
 
@@ -150,6 +166,9 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 		return -1;
 	}
 
+	// 解密
+	Decrypt(port, 2);
+
 	struct sockaddr_in addr;
 	memset(&addr, 0, sizeof(struct sockaddr_in));
 	addr.sin_family = AF_INET;
@@ -163,7 +182,8 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 		return -1;
 	}
 
-	// connect暂时不能做成异步IO，否则遇到不可访问服务器时，会出问题。
+	// connect暂时不能做成异步IO，否则遇到不可访问服务器时，会返回EINPROGRESS。
+	// 误以为这个服务器可以连上，给客户端回复可以连接，但是真正向服务send数据时扯淡了。^^
 	if (connect(serverfd, (struct sockaddr*)&addr, sizeof(addr)) < 0)
 	{
 		switch (errno)
@@ -186,6 +206,8 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 	return serverfd;
 }
 
+// socks5 server recv from transfer decrypt
+// socks5 server send transfer encry
 void Socks5Server::ReadEventHandle(int connectfd)
 {	
 	map<int, Connect*>::iterator conIt = _connectMap.find(connectfd);
@@ -235,6 +257,9 @@ void Socks5Server::ReadEventHandle(int connectfd)
 			//memcpy(reply+4, ip, 4);
 			//memcpy(reply+8, port, 2);
 
+			// 加密发送
+			Encry(reply, 10);
+
 			// 回复socks5连接client
 			if(send(connectfd, reply, 10, MSG_DONTWAIT) != 10)
 			{
@@ -251,14 +276,18 @@ void Socks5Server::ReadEventHandle(int connectfd)
 		else if (connect->_state == ESTABLISHMENT)
 		{
 			// 第一种转发模型：client->sock5 proxy->server
+			bool recvDecrypt = true, sendEncry = false;
 			Channel* clientChannel = &(connect->_clientChannel);
 			Channel* serverChannel = &(connect->_serverChannel);
 
 			// 第二种转发模型:server->sock5 proxy->client 
 			if (serverChannel->_fd == connectfd)
+			{
+				swap(recvDecrypt, sendEncry);
 				swap(clientChannel, serverChannel);
+			}
 
-			Forwarding(clientChannel, serverChannel);
+			Forwarding(clientChannel, serverChannel, recvDecrypt, sendEncry);
 
 			if (clientChannel->_flag && serverChannel->_flag)
 			{
