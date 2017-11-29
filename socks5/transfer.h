@@ -1,5 +1,7 @@
-#pragma once
+#ifndef _TRANSFER_H_
+#define _TRANSFER_H_
 
+#include "common.h"
 #include "epoll.h"
 
 class TransferServer : public EpollServer
@@ -21,3 +23,6 @@ public:
 protected:
 	struct sockaddr_in _socks5addr;
 };
+
+#endif
+

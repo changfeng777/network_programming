@@ -1,5 +1,7 @@
-#pragma once
+#ifndef _SOCKS5_H_
+#define _SOCKS5_H_
 
+#include "common.h"
 #include "epoll.h"
 
 class Socks5Server : public EpollServer
@@ -17,3 +19,6 @@ public:
 	virtual void ReadEventHandle(int connectfd);
 	//virtual void WriteEventHandle(int connectfd);
 };
+
+#endif
+

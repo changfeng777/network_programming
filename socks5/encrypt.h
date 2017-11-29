@@ -1,4 +1,7 @@
-#pragma once
+#ifndef _ENCRYPT_H_
+#define _ENCRYPT_H_
+
+#include "common.h"
 
 static inline char* XOR(char* buf, size_t len)
 {
@@ -32,5 +35,8 @@ static inline void Encry(char* buf, size_t len)
 |============================================|
 
 */
+
+#endif
+
 
 
