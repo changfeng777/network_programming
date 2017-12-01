@@ -3,11 +3,11 @@
 void Socks5Server::ConnectEventHandle(int fd)
 {
 	Connect* connect = new Connect;
-	connect->_state = CONNECTED;
+	connect->_state = AUTH;
 	connect->_clientChannel._fd = fd;
 	connect->_clientChannel._event |= EPOLLIN;
 	_connectMap[fd] = connect;
-	connect->_ref++;
+	connect->_ref = 1;
 
 	// 监听读事件
 	SetNonblocking(fd);
@@ -79,14 +79,17 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 	char buf[len];
 
 	// 窥探缓冲区是否有足够的数据，返回0，表示数据还没到
-	if(recv(connectfd, buf, len, MSG_PEEK) <= 8)
-		return 0;
-
-	if(recv(connectfd, buf, 4, 0) != 4)
+	int rLen = recv(connectfd, buf, len, MSG_PEEK);
+	if (rLen <= 0)
 	{
 		ErrorDebug("read request");
 		return -1;
 	}
+
+	if (rLen < 10)
+		return 0;
+
+	recv(connectfd, buf, 4, 0);
 
 	// 解密
 	Decrypt(buf, 4);
@@ -210,16 +213,20 @@ int Socks5Server::EstablishmentHandle(int connectfd)
 // socks5 server send transfer encry
 void Socks5Server::ReadEventHandle(int connectfd)
 {	
+	TraceDebug("ReadEventHandle %d", connectfd);
+
 	map<int, Connect*>::iterator conIt = _connectMap.find(connectfd);
 	if(conIt != _connectMap.end())
 	{
 		Connect* connect = conIt->second;
-		if (connect->_state == CONNECTED)
+		TraceDebug("ReadEventHandle connect:%d", connect->_state);
+
+		if (connect->_state == AUTH)
 		{
 			if(AuthHandle(connectfd))
-				connect->_state = AUTH;
+				connect->_state = ESTABLISHMENT;
 		}
-		else if (connect->_state == AUTH)
+		else if (connect->_state == ESTABLISHMENT)
 		{
 			// 请求服务器信息，并进行连接
 			bool success = true;
@@ -228,19 +235,24 @@ void Socks5Server::ReadEventHandle(int connectfd)
 			{
 				// 将serverfd设置为非阻塞，并添加到读事件
 				connect->_serverChannel._fd = serverfd;
-				connect->_serverChannel._event = EPOLLIN;
+				connect->_serverChannel._event |= EPOLLIN;
 
 				// 添加serverfd到读事件
 				OpEvent(serverfd, connect->_serverChannel._event, EPOLL_CTL_ADD, __LINE__);
 				_connectMap[serverfd] = connect;
 				connect->_ref++;
 
-				connect->_state = ESTABLISHMENT;
+				connect->_state = FORWARDING;
 			}
 			else if (serverfd == -1)
 			{
 				success = false;
 			}
+			else if (serverfd == 0)
+			{
+				return;
+			}
+			
 
 		  /*+----+-----+-------+------+----------+----------+
 			|VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
@@ -269,11 +281,12 @@ void Socks5Server::ReadEventHandle(int connectfd)
 
 			if(success == false)
 			{
-				OpEvent(connectfd, 0, EPOLL_CTL_DEL, __LINE__);
 				RemoveConnect(connectfd);
+				if (serverfd > 0)
+					RemoveConnect(serverfd);
 			}
 		}
-		else if (connect->_state == ESTABLISHMENT)
+		else if (connect->_state == FORWARDING)
 		{
 			// 第一种转发模型：client->sock5 proxy->server
 			bool recvDecrypt = true, sendEncry = false;
@@ -306,11 +319,36 @@ void Socks5Server::ReadEventHandle(int connectfd)
 	}
 }
 
-int main()
+void Usage()
 {
-	Socks5Server server;
-	server.Start();
-
-	return 0;
+	printf("Usage    : socks5_proxy [-lp port]\n");
+	printf("Examples : socks5_proxy -lp 8001\n");
+	printf("explain	 : -lp: local port\n");
 }
 
+int main(int argc, char** argv)
+{
+	int localPort;
+	if (argc == 1)
+	{
+		localPort = 8001;
+	}
+	else if(argc != 2)
+	{
+		Usage();
+		exit(-1);
+	}
+	else
+	{
+		if(strcmp(argv[5], "-lp"))
+		{	
+			Usage();
+			exit(-1);
+		}
+
+		localPort = atoi(argv[6]);
+	}
+
+	Socks5Server server(localPort);
+	server.Start();
+}

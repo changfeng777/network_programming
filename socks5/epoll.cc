@@ -142,19 +142,31 @@ void EpollServer::SendInLoop(int fd, const char* buf, size_t len)
 	else
 	{
 		ErrorDebug("send to server:%d", fd);
+		RemoveConnect(fd);
 	}
 }
 
 void EpollServer::RemoveConnect(int fd)
 {
-	Connect* connect = _connectMap[fd];
-	assert(connect);
-
-	_connectMap.erase(fd);
-
-	if (--connect->_ref == 0)
+	map<int, Connect*>::iterator conIt = _connectMap.find(fd);
+	if(conIt != _connectMap.end())
 	{
-		delete connect;
+		Connect* connect = conIt->second;
+		Channel* channel = &(connect->_clientChannel);
+		if(fd == connect->_serverChannel._fd)
+			channel = &(connect->_serverChannel);
+
+		if(channel->_event)
+		{
+			OpEvent(channel->_fd, channel->_event, EPOLL_CTL_DEL, __LINE__);
+			channel->_event = 0;
+		}
+
+		_connectMap.erase(fd);
+		if (--connect->_ref == 0)
+		{
+			delete connect;
+		}
 	}
 }
 
@@ -170,8 +182,6 @@ void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel,
 		{
 			Decrypt(buf, rLen);
 		}
-
-		//TraceDebug("recv client:%d bytes", rLen);
 	}
 	else if(rLen == -1)
 	{
@@ -199,10 +209,9 @@ void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel,
 			OpEvent(clientChannel->_fd, clientChannel->_event &= ~EPOLLIN, EPOLL_CTL_MOD, __LINE__);
 		}
 
-		//shutdown(clientChannel->_fd, SHUT_RD);
 		clientChannel->_flag = true;
 
-		// client收到EOF，shutdown server wr
+		// client收到EOF，shutdown server WR
 		if (serverChannel->_buffer.empty())
 		{
 			shutdown(serverChannel->_fd, SHUT_WR);
@@ -224,6 +233,8 @@ void EpollServer::Forwarding(Channel* clientChannel, Channel* serverChannel,
 
 void EpollServer::WriteEventHandle(int fd)
 {
+	TraceDebug("WriteEventHandle %d", fd);
+
 	map<int, Connect*>::iterator conIt = _connectMap.find(fd);
 	if(conIt != _connectMap.end())
 	{

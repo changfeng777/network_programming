@@ -21,9 +21,9 @@ public:
 
 	enum State
 	{
-		CONNECTED,		// 连接
 		AUTH,			// 验证
-		ESTABLISHMENT,  // 转发数据
+		ESTABLISHMENT,  // 确定连接
+		FORWARDING,		// 转发
 	};
 
 	struct Channel
@@ -46,6 +46,14 @@ public:
 			{
 				close(_fd);
 				TraceDebug("close:%d", _fd);
+				_fd = -1;
+			}
+
+			if(_event)
+			{
+				TraceDebug("EPOLL_CTL_DEL: %d", _fd);
+				//OpEvent(_fd, 0, EPOLL_CTL_DEL, __LINE__);
+				_event = 0;
 			}
 		}
 	};
@@ -58,7 +66,7 @@ public:
 		int _ref;				// 引用计数
 
 		Connect()
-			:_state(CONNECTED)
+			:_state(AUTH)
 			,_ref(0)
 		{}
 	};

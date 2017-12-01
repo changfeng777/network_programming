@@ -68,12 +68,46 @@ void TransferServer::ReadEventHandle(int connectfd)
 	}
 }
 
-int main()
+void Usage()
 {
-	//TransferServer server("127.0.0.1", 8001, 8000);
-	TransferServer server("43.224.35.5", 8001, 8000);
-	server.Start();
+	printf("Usage    : transfer_proxy  [-ri ip] [-rp port] [-lp port]\n");
+	printf("Examples : transfer_proxy -ri 192.168.1.11 -rp 8000 -lp 8001\n");
+	printf("explain	 : -ri: remote ip\n");
+	printf("explain	 : -rp: remote port\n");
+	printf("explain	 : -lp: local port\n");
+}
 
-	return 0;
+int main(int argc, char** argv)
+{
+	const char* remoteIp;
+	int remotePort;
+	int localPort;
+	if (argc == 1)
+	{
+		remoteIp = "127.0.0.1";
+		//remoteIp = "43.224.35.5";
+		remotePort = 8001;
+		localPort = 8000;
+	}
+	else if(argc != 7)
+	{
+		Usage();
+		exit(-1);
+	}
+	else
+	{
+		if(strcmp(argv[1], "-ri") || strcmp(argv[3], "-rp") || strcmp(argv[5], "-lp"))
+		{	
+			Usage();
+			exit(-1);
+		}
+
+		remoteIp = argv[2];
+		remotePort = atoi(argv[4]);
+		localPort = atoi(argv[6]);
+	}
+
+	TransferServer server(remoteIp, remotePort, localPort);
+	server.Start();
 }
 

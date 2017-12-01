@@ -11,12 +11,15 @@ public:
 		:EpollServer(port)
 	{}
 
+	// 验证及建立连接
 	bool AuthHandle(int connectfd);
 	int EstablishmentHandle(int connectfd);
 
 	// 重写虚函数
 	virtual void ConnectEventHandle(int connnectfd);
 	virtual void ReadEventHandle(int connectfd);
+
+	// 不需要重写
 	//virtual void WriteEventHandle(int connectfd);
 };
 
