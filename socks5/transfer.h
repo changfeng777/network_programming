@@ -18,7 +18,6 @@ public:
 
 	virtual void ConnectEventHandle(int connnectfd);
 	virtual void ReadEventHandle(int connectfd);
-	//virtual void WriteEventHandle(int connectfd);
 
 protected:
 	struct sockaddr_in _socks5addr;

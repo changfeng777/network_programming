@@ -18,7 +18,22 @@ static IgnoreSigPipe initObj;
 class EpollServer
 {
 public:
+	EpollServer(int port)
+		:_port(port)
+		,_listenfd(-1)
+		,_eventfd(-1)
+	{}
 
+	virtual ~EpollServer()
+	{
+		close(_listenfd);
+	}
+
+	void Start();
+	virtual void ConnectEventHandle(int connnectfd) = 0;
+	virtual void ReadEventHandle(int connectfd) = 0;
+	virtual void WriteEventHandle(int connectfd);
+protected:
 	enum State
 	{
 		AUTH,			// 验证
@@ -71,17 +86,6 @@ public:
 		{}
 	};
 
-	EpollServer(int port)
-		:_port(port)
-		,_listenfd(-1)
-		,_eventfd(-1)
-	{}
-
-	virtual ~EpollServer()
-	{
-		close(_listenfd);
-	}
-
 	void SetNoDelay(int fd)
 	{
 		int optval = 1;
@@ -122,11 +126,6 @@ public:
 	void Forwarding(Channel* clientChannel, Channel* serverChannel,
 		bool recvDecrypt, bool sendEncry);
 	void EventLoop();
-	void Start();
-
-	virtual void ConnectEventHandle(int connnectfd) = 0;
-	virtual void ReadEventHandle(int connectfd) = 0;
-	virtual void WriteEventHandle(int connectfd);
 
 protected:
 	int _port;     // 服务端口

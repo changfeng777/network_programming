@@ -239,7 +239,7 @@ void EpollServer::WriteEventHandle(int fd)
 	if(conIt != _connectMap.end())
 	{
 		Connect* connect = conIt->second;
-		assert(connect->_state == ESTABLISHMENT);
+		assert(connect->_state == FORWARDING);
 		Channel* channel = &(connect->_clientChannel);
 		if(fd == connect->_serverChannel._fd)
 			channel = &(connect->_serverChannel);

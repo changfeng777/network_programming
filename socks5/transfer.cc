@@ -84,8 +84,8 @@ int main(int argc, char** argv)
 	int localPort;
 	if (argc == 1)
 	{
-		remoteIp = "127.0.0.1";
-		//remoteIp = "43.224.35.5";
+		//remoteIp = "127.0.0.1";
+		remoteIp = "43.224.35.5";
 		remotePort = 8001;
 		localPort = 8000;
 	}
